@@ -1,99 +1,132 @@
 import streamlit as st
-import base64
-import requests
-from io import BytesIO
-from PIL import Image
-
-# Tratamento de importação da conexão
-try:
-    from streamlit_gsheets import GSheetsConnection
-except ImportError:
-    from st_gsheets_connection import GSheetsConnection
-
+from st_gsheets_connection import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+import pandas as pd
+import os
 
 # 1. Configuração da Página
-st.set_page_config(page_title="BioEstética - Dashboard Luiza", layout="wide")
+st.set_page_config(
+    page_title="BioEstética - Dashboard Luiza",
+    page_icon="🩺",
+    layout="wide"
+)
 
-# --- FUNÇÃO TÉCNICA PARA EVITAR O ERRO 'image_to_url' ---
-def get_as_base64(file_id):
-    url = f'https://drive.google.com/uc?id={file_id}'
-    try:
-        response = requests.get(url, timeout=15)
-        img = Image.open(BytesIO(response.content)).convert("RGBA")
-        img = img.resize((400, 733))
-        # O segredo: Converter para Base64 para o componente não tentar criar URL
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        return f"data:image/png;base64,{img_str}"
-    except:
-        return None
-
-# 2. Conexão Sheets
+# 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+@st.cache_data(ttl=0) # ttl=0 para garantir dados sempre frescos
 def load_data():
     url = "https://docs.google.com/spreadsheets/d/1SzYK2ocbSLisKk5oxEyqANNS8m3wZ4gcoLGSiFMNsQM/edit?usp=sharing"
-    return conn.read(spreadsheet=url, ttl="0")
+    return conn.read(spreadsheet=url)
 
 try:
     df_bruto = load_data()
-    df = df_bruto.rename(columns={
-        'Nome completo': 'nome', 
-        'Sexo (Masculino)': 'sexo_m',
-        '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa'
-    })
-except:
-    st.error("Erro ao carregar planilha.")
+except Exception as e:
+    st.error(f"Erro ao conectar com a planilha: {e}")
     st.stop()
 
+# 3. Tratamento de Colunas (Interface Original)
+df = df_bruto.rename(columns={
+    'Nome completo': 'nome',
+    'Sexo (Masculino)': 'sexo_m',
+    'Sexo (Feminino)': 'sexo_f',
+    '1.Você possui alguma doença? (crônica, hormonal, autoimune) (Sim)': 'doenca_sim',
+    'Se sim, qual?': 'doenca_detalhe',
+    '6.Está grávida ou amamentando? (Sim)': 'gravida_sim',
+    '4. Possui alergia a medicamentos ou\n\xa0cosméticos? (Sim)': 'alergia_sim',
+    'Se sim, quais?': 'alergia_detalhe',
+    '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa',
+    'Submitted at': 'data_envio'
+})
+
 # --- SIDEBAR ---
+st.sidebar.title("🩺 Gestão de Pacientes")
 lista_pacientes = sorted(df['nome'].dropna().unique())
 paciente_selecionado = st.sidebar.selectbox("Selecione o Paciente", lista_pacientes)
 dados = df[df['nome'] == paciente_selecionado].iloc[0]
 
-st.title(f"Prontuário: {paciente_selecionado}")
+# --- CABEÇALHO ---
+st.title(f"Prontuário Digital: {paciente_selecionado}")
+st.caption(f"Dados via Tally | Última Anamnese: {dados['data_envio']}")
 
-# --- MAPA DE MEDIDAS ---
-st.subheader("📐 Mapa de Medidas Corporal")
+# --- ABAS ---
+tab1, tab2, tab3 = st.tabs(["📋 Ficha de Anamnese", "📐 Mapa de Medidas", "📊 Evolução"])
 
-# IDs do seu Google Drive
-ID_MASCULINO = "1nQTT0v1B5Ik5OMhOtC2YMEDlZEkB-Phf"
-ID_FEMININO = "1xppoQNIJKa0ZXJzNxDYEXiPPpKJ19eX7"
-
-is_masc = str(dados.get('sexo_m')).lower() in ['true', '1.0', '1', 'sim']
-id_escolhido = ID_MASCULINO if is_masc else ID_FEMININO
-
-# Obtemos a imagem já formatada em Base64
-img_b64 = get_as_base64(id_escolhido)
-
-if img_b64:
-    col_mapa, col_info = st.columns([1.5, 1])
+with tab1:
+    st.subheader("Informações Coletadas no Tally")
+    col1, col2, col3 = st.columns(3)
     
-    with col_mapa:
-        # AQUI É O PONTO CRÍTICO: 
-        # Passamos a string Base64 DIRETAMENTE para o background_image
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 75, 75, 0.3)",
-            stroke_width=2,
-            stroke_color="#FF4B4B",
-            background_image=img_b64, # Não passamos o objeto Image, mas a string
-            update_streamlit=True,
-            height=733,
-            width=400,
-            drawing_mode="point",
-            key=f"canvas_v_final_{paciente_selecionado}",
-        )
-    
-    with col_info:
-        if canvas_result.json_data and canvas_result.json_data["objects"]:
-            ponto = canvas_result.json_data["objects"][-1]
-            st.success(f"📍 Marcado: X={int(ponto['left'])}, Y={int(ponto['top'])}")
-            regiao = st.text_input("Região")
-            if st.button("Salvar Medida"):
-                st.balloons()
+    with col1:
+        st.info("🩺 Condições Clínicas")
+        if str(dados.get('doenca_sim')).lower() in ['true', '1.0', '1', 'sim']:
+            st.error(f"**Doença Relatada:** {dados.get('doenca_detalhe', 'Ver na planilha')}")
         else:
-            st.info("Clique na silhueta para marcar um ponto.")
-else:
-    st.error("Erro ao carregar a imagem do Drive. Verifique a permissão de compartilhamento.")
+            st.success("Nenhuma doença relatada.")
+            
+    with col2:
+        st.info("⚠️ Alertas de Risco")
+        if str(dados.get('gravida_sim')).lower() in ['true', '1.0', '1', 'sim']:
+            st.warning("⚠️ Paciente Gestante ou Lactante")
+        
+        if str(dados.get('alergia_sim')).lower() in ['true', '1.0', '1', 'sim']:
+            st.error(f"**ALERGIA:** {dados.get('alergia_detalhe', 'Ver na planilha')}")
+        else:
+            st.success("Sem alergias conhecidas.")
+
+    with col3:
+        st.info("🎯 Queixa Principal")
+        st.write(dados.get('queixa', 'Não informado'))
+
+    st.divider()
+    st.markdown("#### 📝 Detalhes da Rotina")
+    st.write(dados.get('28. Conte um pouco da sua rotina (trabalho, cuidados com a pele, alimentação...)', 'Informação não disponível.'))
+
+with tab2:
+    st.subheader("Marcação Corporal e Facial")
+    
+    # Lógica da imagem (Lendo os PNGs que você subiu)
+    is_masculino = str(dados.get('sexo_m')).lower() in ['true', '1.0', '1', 'sim']
+    nome_img = "homem.png" if is_masculino else "mulher.png"
+    caminho_img = os.path.join(os.path.dirname(__file__), nome_img)
+    
+    c_canvas, c_form = st.columns([1.5, 1])
+
+    if os.path.exists(caminho_img):
+        with c_canvas:
+            img_pil = Image.open(caminho_img).convert("RGB")
+            # Redimensionamento padrão para o canvas
+            img_resized = img_pil.resize((400, 733))
+            
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 75, 75, 0.3)",
+                stroke_width=2,
+                stroke_color="#FF4B4B",
+                background_image=img_resized,
+                update_streamlit=True,
+                height=733,
+                width=400,
+                drawing_mode="point",
+                key=f"canvas_v_final_{paciente_selecionado}",
+            )
+        
+        with c_form:
+            st.markdown("### 📝 Nova Medida")
+            if canvas_result and canvas_result.json_data and canvas_result.json_data["objects"]:
+                ponto = canvas_result.json_data["objects"][-1]
+                st.success(f"📍 Ponto: X={int(ponto['left'])}, Y={int(ponto['top'])}")
+                regiao = st.text_input("Região do corpo", placeholder="Ex: Abdômen")
+                medida = st.number_input("Medida (cm)", step=0.1)
+                
+                if st.button("Salvar Medida"):
+                    st.balloons()
+                    st.success("Medida registrada (simulação)!")
+            else:
+                st.info("Clique na silhueta para marcar um ponto.")
+    else:
+        st.error(f"Erro: O arquivo '{nome_img}' não foi detectado no repositório.")
+        st.warning("Verifique se o nome do arquivo no GitHub está exatamente igual (minúsculo).")
+
+with tab3:
+    st.subheader("Acompanhamento de Resultados")
+    st.write("Dados históricos aparecerão aqui em breve.")
