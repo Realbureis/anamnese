@@ -3,3 +3,4 @@ streamlit-gsheets-connection==0.0.3
 streamlit-drawable-canvas==0.9.3
 Pillow==10.2.0
 pandas
+requests
