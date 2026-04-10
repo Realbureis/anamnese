@@ -1,23 +1,14 @@
 import streamlit as st
-import pandas as pd
-from PIL import Image
-import os
+from st_gsheets_connection import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+import pandas as pd
+import os
 
 # 1. Configuração da Página
-st.set_page_config(
-    page_title="BioEstética - Dashboard Luiza",
-    page_icon="🩺",
-    layout="wide"
-)
+st.set_page_config(page_title="BioEstética - Dashboard Luiza", page_icon="🩺", layout="wide")
 
-# 2. Importação Flexível da Conexão
-try:
-    from streamlit_gsheets import GSheetsConnection
-except ImportError:
-    from st_gsheets_connection import GSheetsConnection
-
-# 3. Conexão com Google Sheets
+# 2. Conexão com Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=0)
@@ -27,42 +18,40 @@ def load_data():
 
 try:
     df_bruto = load_data()
-    # Mapeamento de Colunas Original
-    df = df_bruto.rename(columns={
-        'Nome completo': 'nome',
-        'Sexo (Masculino)': 'sexo_m',
-        'Sexo (Feminino)': 'sexo_f',
-        '1.Você possui alguma doença? (crônica, hormonal, autoimune) (Sim)': 'doenca_sim',
-        'Se sim, qual?': 'doenca_detalhe',
-        '6.Está grávida ou amamentando? (Sim)': 'gravida_sim',
-        '4. Possui alergia a medicamentos ou\n\xa0cosméticos? (Sim)': 'alergia_sim',
-        'Se sim, quais?': 'alergia_detalhe',
-        '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa',
-        'Submitted at': 'data_envio'
-    })
 except Exception as e:
-    st.error(f"Erro ao carregar planilha: {e}")
+    st.error(f"Erro ao conectar com a planilha: {e}")
     st.stop()
 
-# --- SIDEBAR (Correção do Erro sorted/TypeError) ---
-lista_pacientes = sorted([nome for nome in df['nome'].unique() if pd.notna(nome)])
+# 3. Mapeamento de Colunas (Sua interface favorita)
+df = df_bruto.rename(columns={
+    'Nome completo': 'nome',
+    'Sexo (Masculino)': 'sexo_m',
+    'Sexo (Feminino)': 'sexo_f',
+    '1.Você possui alguma doença? (crônica, hormonal, autoimune) (Sim)': 'doenca_sim',
+    'Se sim, qual?': 'doenca_detalhe',
+    '6.Está grávida ou amamentando? (Sim)': 'gravida_sim',
+    '4. Possui alergia a medicamentos ou\n\xa0cosméticos? (Sim)': 'alergia_sim',
+    'Se sim, quais?': 'alergia_detalhe',
+    '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa',
+    'Submitted at': 'data_envio'
+})
 
-if lista_pacientes:
-    paciente_sel = st.sidebar.selectbox("Selecione o Paciente", lista_pacientes)
-    dados = df[df['nome'] == paciente_sel].iloc[0]
-else:
-    st.error("Nenhum dado encontrado na planilha.")
-    st.stop()
+# --- SIDEBAR ---
+st.sidebar.title("🩺 Gestão de Pacientes")
+# Limpa nomes vazios para não dar erro no sorted
+lista_pacientes = sorted([n for n in df['nome'].unique() if pd.notna(n)])
+paciente_sel = st.sidebar.selectbox("Selecione o Paciente", lista_pacientes)
+dados = df[df['nome'] == paciente_sel].iloc[0]
 
 # --- CABEÇALHO ---
 st.title(f"Prontuário Digital: {paciente_sel}")
-st.caption(f"Última Anamnese registrada em: {dados.get('data_envio', 'N/A')}")
+st.caption(f"Última atualização: {dados.get('data_envio', 'N/A')}")
 
 # --- ABAS ---
-tab1, tab2, tab3 = st.tabs(["📋 Ficha de Anamnese", "📐 Mapa de Medidas", "📊 Evolução"])
+tab1, tab2, tab3 = st.tabs(["📋 Anamnese", "📐 Mapa Corporal", "📊 Evolução"])
 
 with tab1:
-    st.subheader("Informações Coletadas")
+    st.subheader("Ficha de Triagem")
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -74,9 +63,11 @@ with tab1:
             
     with col2:
         st.info("⚠️ Alertas de Risco")
+        # Alerta de Gravidez
         if str(dados.get('gravida_sim')).lower() in ['true', '1.0', '1', 'sim']:
             st.warning("⚠️ Paciente Gestante/Lactante")
         
+        # Alerta de Alergia
         if str(dados.get('alergia_sim')).lower() in ['true', '1.0', '1', 'sim']:
             st.error(f"**ALERGIA:** {dados.get('alergia_detalhe', 'Relatada')}")
         else:
@@ -88,51 +79,45 @@ with tab1:
 
     st.divider()
     st.markdown("#### 📝 Detalhes da Rotina")
-    st.write(dados.get('28. Conte um pouco da sua rotina (trabalho, cuidados com a pele, alimentação...)', 'N/A'))
+    st.write(dados.get('28. Conte um pouco da sua rotina (trabalho, cuidados com a pele, alimentação...)', 'Informação não disponível.'))
 
 with tab2:
-    st.subheader("Marcação Corporal")
+    st.subheader("Marcação de Medidas")
     
-    # Lógica da imagem local
+    # Busca a imagem que você subiu no GitHub
     is_m = str(dados.get('sexo_m')).lower() in ['true', '1.0', '1', 'sim']
     nome_img = "homem.png" if is_m else "mulher.png"
     
     if os.path.exists(nome_img):
-        # Carregamento e Redimensionamento Forçado para evitar erro de 'height'
         img_pil = Image.open(nome_img).convert("RGB")
-        largura_fixa, altura_fixa = 400, 733
-        img_resized = img_pil.resize((largura_fixa, altura_fixa))
+        # Forçamos o tamanho para o canvas não se perder
+        img_resized = img_pil.resize((400, 733))
         
-        col_c, col_f = st.columns([1.5, 1])
-        
-        with col_c:
+        c1, c2 = st.columns([1.5, 1])
+        with c1:
             canvas_result = st_canvas(
                 fill_color="rgba(255, 75, 75, 0.3)",
                 stroke_width=2,
                 stroke_color="#FF4B4B",
                 background_image=img_resized,
                 update_streamlit=True,
-                height=altura_fixa,
-                width=largura_fixa,
+                height=733,
+                width=400,
                 drawing_mode="point",
-                key=f"canvas_final_{paciente_sel}",
+                key=f"canvas_restaurado_{paciente_sel}",
             )
-        
-        with col_f:
-            st.markdown("### 📝 Nova Medida")
+        with c2:
             if canvas_result.json_data and canvas_result.json_data["objects"]:
                 p = canvas_result.json_data["objects"][-1]
                 st.success(f"📍 Ponto: X={int(p['left'])}, Y={int(p['top'])}")
-                regiao = st.text_input("Região do corpo")
+                regiao = st.text_input("Região anotada")
                 medida = st.number_input("Medida (cm)", step=0.1)
                 if st.button("Salvar Medida"):
                     st.balloons()
-                    st.success("Medida salva com sucesso!")
             else:
                 st.info("Clique na silhueta para marcar.")
     else:
-        st.error(f"Arquivo '{nome_img}' não encontrado. Verifique o GitHub.")
+        st.error(f"Arquivo '{nome_img}' não encontrado no repositório GitHub.")
 
 with tab3:
-    st.subheader("Histórico")
-    st.write("Evolução histórica aparecerá aqui em breve.")
+    st.write("Dados históricos e gráficos de evolução.")
