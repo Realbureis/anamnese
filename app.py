@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+from st_gsheets_connection import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 import pandas as pd
@@ -14,12 +14,12 @@ st.set_page_config(page_title="BioEstética - Dashboard Luiza", layout="wide")
 def load_image_from_drive(file_id):
     url = f'https://drive.google.com/uc?id={file_id}'
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         return Image.open(BytesIO(response.content)).convert("RGB")
     except:
         return None
 
-# 2. Conexão Sheets
+# 2. Conexão Sheets (Usando o nome corrigido st_gsheets_connection)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
@@ -29,29 +29,46 @@ def load_data():
 try:
     df_bruto = load_data()
     df = df_bruto.rename(columns={
-        'Nome completo': 'nome', 'Sexo (Masculino)': 'sexo_m',
-        '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa'
+        'Nome completo': 'nome', 
+        'Sexo (Masculino)': 'sexo_m',
+        '27. Qual sua principal queixa? E seu objetivo com o tratamento?': 'queixa',
+        '6.Está grávida ou amamentando? (Sim)': 'gravida_sim',
+        '4. Possui alergia a medicamentos ou\n\xa0cosméticos? (Sim)': 'alergia_sim',
+        'Se sim, quais?': 'alergia_detalhe'
     })
-except:
-    st.error("Erro ao carregar planilha.")
+except Exception as e:
+    st.error(f"Erro ao carregar planilha: {e}")
     st.stop()
 
 # --- SIDEBAR ---
 lista_pacientes = sorted(df['nome'].dropna().unique())
-paciente_selecionado = st.sidebar.selectbox("Paciente", lista_pacientes)
+paciente_selecionado = st.sidebar.selectbox("Selecione o Paciente", lista_pacientes)
 dados = df[df['nome'] == paciente_selecionado].iloc[0]
 
+# --- CABEÇALHO ---
+st.title(f"Prontuário Digital: {paciente_selecionado}")
+
 # --- ABAS ---
-tab1, tab2, tab3 = st.tabs(["📋 Anamnese", "📐 Mapa de Medidas", "📊 Evolução"])
+tab1, tab2, tab3 = st.tabs(["📋 Ficha de Anamnese", "📐 Mapa de Medidas", "📊 Evolução"])
 
 with tab1:
-    st.title(f"Prontuário: {paciente_selecionado}")
-    st.info(f"**Queixa Principal:** {dados.get('queixa', 'N/A')}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("🩺 Condições Clínicas")
+        st.success("Nenhuma doença relatada.") # Layout original
+    with col2:
+        st.info("⚠️ Alertas de Risco")
+        if str(dados.get('alergia_sim')).lower() in ['true', '1.0', '1', 'sim']:
+            st.error(f"**ALERGIA:** {dados.get('alergia_detalhe', 'Sim')}")
+        else: st.success("Sem alergias.")
+    with col3:
+        st.info("🎯 Queixa Principal")
+        st.write(dados.get('queixa', 'N/A'))
 
 with tab2:
     st.subheader("Marcação Corporal")
     
-    # IDs extraídos dos seus links
+    # Seus links do Drive
     ID_MASCULINO = "1nQTT0v1B5Ik5OMhOtC2YMEDlZEkB-Phf"
     ID_FEMININO = "1xppoQNIJKa0ZXJzNxDYEXiPPpKJ19eX7"
     
@@ -64,9 +81,7 @@ with tab2:
     
     if img_drive:
         with col_canvas:
-            # Redimensionamos para manter o padrão
             img_resized = img_drive.resize((400, 733))
-            
             canvas_result = st_canvas(
                 fill_color="rgba(255, 75, 75, 0.3)",
                 stroke_width=2,
@@ -76,17 +91,20 @@ with tab2:
                 height=733,
                 width=400,
                 drawing_mode="point",
-                key=f"canvas_drive_{paciente_selecionado}",
+                key=f"canvas_final_{paciente_selecionado}",
             )
         
         with col_form:
-            if canvas_result.json_data and canvas_result.json_data["objects"]:
+            if canvas_result and canvas_result.json_data and canvas_result.json_data["objects"]:
                 p = canvas_result.json_data["objects"][-1]
                 st.success(f"📍 Ponto: X={int(p['left'])}, Y={int(p['top'])}")
-                regiao = st.text_input("Região")
+                regiao = st.text_input("Região do corpo")
                 if st.button("Salvar Medida"):
                     st.balloons()
             else:
                 st.info("Clique na imagem para marcar.")
     else:
-        st.error("Não foi possível carregar a imagem. Verifique se o link no Drive está como 'Qualquer pessoa com o link'.")
+        st.error("Erro ao carregar silhueta. Verifique se o link do Drive está liberado para 'Qualquer pessoa com o link'.")
+
+with tab3:
+    st.write("Evolução histórica aparecerá aqui.")
